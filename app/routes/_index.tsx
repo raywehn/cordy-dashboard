@@ -1,10 +1,13 @@
 import { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import { json } from "@remix-run/server-runtime";
 import { useLoaderData } from "@remix-run/react";
 import { useState, useMemo } from "react"; // Add this line
 import { parse } from "csv-parse/sync";
 import { promises as fs } from "fs";
 import path from "path";
 import { AreaChartSemiFilled, type DataPoint } from "~/components/chart";
+import { GrowthRateChart } from "~/components/GrowthRateChart";
+
 
 export const meta: MetaFunction = () => {
   return [
@@ -61,54 +64,72 @@ export async function loader({ request }: LoaderFunctionArgs) {
     // Convert to cumulative data points for the chart
     const sortedDates = Array.from(usersByDate.keys()).sort();
     let cumulativeCount = 0;
-    const data: Array<{date: string, value: number}> = [];
+    const cumulativeData: Array<{date: string, value: number}> = [];
     
     sortedDates.forEach(dateStr => {
       cumulativeCount += usersByDate.get(dateStr) || 0;
-      data.push({
+      cumulativeData.push({
         date: dateStr,
         value: cumulativeCount
       });
     });
     
-    return new Response(JSON.stringify({ data }), {
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
-  } catch (error) {
-    console.error("CSV parsing error:", error);
-    return new Response(JSON.stringify({ error: String(error) }), {
-      status: 500,
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
-  }
+   // Calculate growth rate data (daily net new users)
+   const growthRateData: Array<{date: string, value: number}> = [];
+    
+   sortedDates.forEach((dateStr, index) => {
+     const dailyValue = usersByDate.get(dateStr) || 0;
+     growthRateData.push({
+       date: dateStr,
+       value: dailyValue // Daily new users (not cumulative)
+     });
+   });
+   
+   return json({ 
+     cumulativeData, 
+     growthRateData,
+     error: null 
+   });
+ } catch (e) {
+   console.error("Error loading data:", e);
+   return json({ 
+     cumulativeData: [], 
+     growthRateData: [],
+     error: "Failed to load user data" 
+   });
+ }
 }
+
 export default function Index() {
-  const { data, error } = useLoaderData<{ data?: Array<{date: string, value: number}>, error?: string }>();
-  const [timeFilter, setTimeFilter] = useState("all"); // Add state for time filter
+  const { cumulativeData, growthRateData, error } = useLoaderData<{ 
+    cumulativeData?: Array<{date: string, value: number}>, 
+    growthRateData?: Array<{date: string, value: number}>, 
+    error?: string 
+  }>();
+  const [timeFilter, setTimeFilter] = useState("all");
   
-  if (error) {
-    return (
-      <div className="p-8 text-red-500">
-        <h1 className="text-2xl font-bold mb-6">Error Loading Data</h1>
-        <pre className="bg-red-50 p-4 rounded overflow-auto">{error}</pre>
-      </div>
-    );
-  }
-   // Convert string dates back to Date objects for the chart
-   const unfilteredChartData: DataPoint[] = (data || []).map(d => ({
-    date: new Date(d.date),
-    value: d.value
-  }));
+  // Process data for both charts
+  const unfilteredCumulativeChartData = useMemo(() => {
+    if (!cumulativeData) return [];
+    
+    return cumulativeData.map(point => ({
+      date: new Date(point.date),
+      value: point.value
+    }));
+  }, [cumulativeData]);
   
-  // Filter data based on selected time period
-  const chartData = useMemo(() => {
-    if (timeFilter === "all" || unfilteredChartData.length === 0) {
-      return unfilteredChartData;
-    }
+  const unfilteredGrowthRateChartData = useMemo(() => {
+    if (!growthRateData) return [];
+    
+    return growthRateData.map(point => ({
+      date: new Date(point.date),
+      value: point.value
+    }));
+  }, [growthRateData]);
+  
+  // Time filter code for the cumulative chart (keep your existing implementation)
+  const cumulativeChartData = useMemo(() => {
+    if (!unfilteredCumulativeChartData.length) return [];
     
     const now = new Date();
     const cutoffDate = new Date();
@@ -127,55 +148,76 @@ export default function Index() {
         cutoffDate.setFullYear(now.getFullYear() - 1);
         break;
       default:
-        return unfilteredChartData;
+        return unfilteredCumulativeChartData;
     }
     
     // Filter to data points after cutoff date
-    const filteredData = unfilteredChartData.filter(point => point.date >= cutoffDate);
+    return unfilteredCumulativeChartData.filter(point => point.date >= cutoffDate);
+  }, [unfilteredCumulativeChartData, timeFilter]);
+  
+  // Apply the same time filter logic to the growth rate chart
+  const growthRateChartData = useMemo(() => {
+    // Similar implementation to cumulativeChartData but for growth rate data
+    if (!unfilteredGrowthRateChartData.length) return [];
     
-    // If there's no data in the selected period, return empty array
-    if (filteredData.length === 0) {
-      return filteredData;
+    const now = new Date();
+    const cutoffDate = new Date();
+    
+    switch (timeFilter) {
+      case "7days":
+        cutoffDate.setDate(now.getDate() - 7);
+        break;
+      case "30days":
+        cutoffDate.setDate(now.getDate() - 30);
+        break;
+      case "3months":
+        cutoffDate.setMonth(now.getMonth() - 3);
+        break;
+      case "12months":
+        cutoffDate.setFullYear(now.getFullYear() - 1);
+        break;
+      default:
+        return unfilteredGrowthRateChartData;
     }
     
-    // Adjust the first point to reflect the correct cumulative value at the start of the period
-    if (filteredData[0] !== unfilteredChartData[0]) {
-      // Find the last point before our filter starts
-      const lastIndexBeforeCutoff = unfilteredChartData.findIndex(p => p.date >= cutoffDate) - 1;
-      const previousValue = lastIndexBeforeCutoff >= 0 ? unfilteredChartData[lastIndexBeforeCutoff].value : 0;
-      
-      // Create adjusted data with the first point showing the cumulative value before this period
-      return filteredData.map((point, i) => {
-        if (i === 0) {
-          return { ...point, previousValue }; // Store previous value for reference
-        }
-        return point;
-      });
-    }
-    
-    return filteredData;
-  }, [unfilteredChartData, timeFilter]);
+    // Filter to data points after cutoff date
+    return unfilteredGrowthRateChartData.filter(point => point.date >= cutoffDate);
+  }, [unfilteredGrowthRateChartData, timeFilter]);
   
   return (
     <div className="p-8">
       <h1 className="text-2xl font-bold mb-6 text-gray-900 dark:text-gray-100">Telegram Growth</h1>
+      
+      {/* Time filter controls */}
+      <div className="flex justify-end mb-4">
+        <select
+          value={timeFilter}
+          onChange={(e) => setTimeFilter(e.target.value)}
+          className="px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+        >
+          <option value="all">All Time</option>
+          <option value="7days">Last 7 Days</option>
+          <option value="30days">Last 30 Days</option>
+          <option value="3months">Last 3 Months</option>
+          <option value="12months">Last 12 Months</option>
+        </select>
+      </div>
+      
+      {/* Cumulative Growth Chart */}
+      <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg mb-8">
+        <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-gray-100">Cumulative Growth</h2>
+        {cumulativeChartData.length > 0 ? (
+          <AreaChartSemiFilled data={cumulativeChartData} />
+        ) : (
+          <p className="text-center py-10 text-gray-500">No data available for the selected period</p>
+        )}
+      </div>
+      
+      {/* Growth Rate Chart */}
       <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg">
-        <div className="flex justify-end mb-4">
-          <select
-            value={timeFilter}
-            onChange={(e) => setTimeFilter(e.target.value)}
-            className="px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-          >
-            <option value="all">All Time</option>
-            <option value="7days">Last 7 Days</option>
-            <option value="30days">Last 30 Days</option>
-            <option value="3months">Last 3 Months</option>
-            <option value="12months">Last 12 Months</option>
-          </select>
-        </div>
-        
-        {chartData.length > 0 ? (
-          <AreaChartSemiFilled data={chartData} />
+        <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-gray-100">Daily Growth Rate</h2>
+        {growthRateChartData.length > 0 ? (
+          <GrowthRateChart data={growthRateChartData} />
         ) : (
           <p className="text-center py-10 text-gray-500">No data available for the selected period</p>
         )}
