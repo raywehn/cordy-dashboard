@@ -6,6 +6,8 @@ import {
   ScrollRestoration,
 } from "@remix-run/react";
 import type { LinksFunction } from "@remix-run/node";
+import { ThemeProvider } from "~/utils/theme-provider";
+import { ThemeToggle } from "~/components/ThemeToggle";
 
 import "./tailwind.css";
 
@@ -22,6 +24,22 @@ export const links: LinksFunction = () => [
   },
 ];
 
+// Prevent flash of wrong theme
+const clientThemeCode = `
+  let isDark = false;
+  const stored = localStorage.getItem('color-theme');
+  
+  if (stored === 'dark') {
+    isDark = true;
+  }
+  
+  if (isDark) {
+    document.documentElement.classList.add('dark');
+  } else {
+    document.documentElement.classList.remove('dark');
+  }
+`;
+
 export function Layout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
@@ -30,9 +48,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <Meta />
         <Links />
+        <script dangerouslySetInnerHTML={{ __html: clientThemeCode }} />
       </head>
       <body>
-        {children}
+        <ThemeProvider>
+          {children}
+          <ThemeToggle />
+        </ThemeProvider>
         <ScrollRestoration />
         <Scripts />
       </body>
