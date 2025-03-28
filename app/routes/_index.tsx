@@ -1,20 +1,13 @@
-import { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
-import { json } from "@remix-run/server-runtime";
-import { useLoaderData } from "@remix-run/react";
-import { useState, useMemo } from "react"; // Add this line
+import { useState, useMemo } from "react";
+import { useLoaderData, json } from "@remix-run/react";
+import { LoaderFunctionArgs } from "@remix-run/node";
 import { parse } from "csv-parse/sync";
-import { promises as fs } from "fs";
 import path from "path";
-import { AreaChartSemiFilled, type DataPoint } from "~/components/chart";
+import fs from "fs/promises";
+import { AreaChartSemiFilled } from "~/components/chart";
 import { GrowthRateChart } from "~/components/GrowthRateChart";
-
-
-export const meta: MetaFunction = () => {
-  return [
-    { title: "Telegram  Dashboard" },
-    { name: "description", content: "Tracking metrics of success" },
-  ];
-};
+import { MonthlyGrowthChart } from "~/components/MonthlyGrowthRate";
+import { ThemeToggle } from "~/components/ThemeToggle";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   try {
@@ -85,25 +78,61 @@ export async function loader({ request }: LoaderFunctionArgs) {
      });
    });
    
+   // Add monthly growth rate calculation
+   const monthlyGrowthRateData: Array<{date: string, value: number}> = [];
+   const monthlyData = new Map<string, {total: number, count: number}>();
+   
+   growthRateData.forEach(point => {
+     const date = new Date(point.date);
+     const monthKey = `${date.getFullYear()}-${date.getMonth() + 1}`;
+     
+     if (!monthlyData.has(monthKey)) {
+       monthlyData.set(monthKey, { total: 0, count: 0 });
+     }
+     
+     const monthData = monthlyData.get(monthKey)!;
+     monthData.total += point.value;
+     monthData.count += 1;
+   });
+   
+   // Convert to array and calculate average
+   Array.from(monthlyData.entries()).forEach(([monthKey, data]) => {
+     const [year, month] = monthKey.split('-').map(Number);
+     // Set to first day of month for consistent sorting/display
+     const monthDate = new Date(year, month - 1, 1);
+     const averageValue = data.count > 0 ? Math.round(data.total / data.count) : 0;
+     
+     monthlyGrowthRateData.push({
+       date: monthDate.toISOString().split('T')[0],
+       value: averageValue
+     });
+   });
+   
+   // Sort by date
+   monthlyGrowthRateData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+   
    return json({ 
      cumulativeData, 
      growthRateData,
+     monthlyGrowthRateData,
      error: null 
    });
- } catch (e) {
-   console.error("Error loading data:", e);
-   return json({ 
-     cumulativeData: [], 
-     growthRateData: [],
-     error: "Failed to load user data" 
-   });
- }
+  } catch (e) {
+    console.error("Error loading data:", e);
+    return json({ 
+      cumulativeData: [], 
+      growthRateData: [],
+      monthlyGrowthRateData: [],
+      error: "Failed to load user data" 
+    });
+  }
 }
 
 export default function Index() {
-  const { cumulativeData, growthRateData, error } = useLoaderData<{ 
+  const { cumulativeData, growthRateData, monthlyGrowthRateData, error } = useLoaderData<{ 
     cumulativeData?: Array<{date: string, value: number}>, 
-    growthRateData?: Array<{date: string, value: number}>, 
+    growthRateData?: Array<{date: string, value: number}>,
+    monthlyGrowthRateData?: Array<{date: string, value: number}>,
     error?: string 
   }>();
   const [timeFilter, setTimeFilter] = useState("all");
@@ -127,7 +156,17 @@ export default function Index() {
     }));
   }, [growthRateData]);
   
-  // Time filter code for the cumulative chart (keep your existing implementation)
+  // Process data for monthly growth rate chart
+  const unfilteredMonthlyGrowthRateChartData = useMemo(() => {
+    if (!monthlyGrowthRateData) return [];
+    
+    return monthlyGrowthRateData.map(point => ({
+      date: new Date(point.date),
+      value: point.value
+    }));
+  }, [monthlyGrowthRateData]);
+  
+  // Time filter code for the cumulative chart
   const cumulativeChartData = useMemo(() => {
     if (!unfilteredCumulativeChartData.length) return [];
     
@@ -184,9 +223,36 @@ export default function Index() {
     return unfilteredGrowthRateChartData.filter(point => point.date >= cutoffDate);
   }, [unfilteredGrowthRateChartData, timeFilter]);
   
+  // Apply the same time filter logic to the monthly growth rate chart
+  const monthlyGrowthRateChartData = useMemo(() => {
+    if (!unfilteredMonthlyGrowthRateChartData.length) return [];
+    
+    const now = new Date();
+    const cutoffDate = new Date();
+    
+    switch (timeFilter) {
+      case "7days":
+      case "30days":
+        cutoffDate.setDate(now.getDate() - 30);
+        break;
+      case "3months":
+        cutoffDate.setMonth(now.getMonth() - 3);
+        break;
+      case "12months":
+        cutoffDate.setFullYear(now.getFullYear() - 1);
+        break;
+      default:
+        return unfilteredMonthlyGrowthRateChartData;
+    }
+    
+    // Filter to data points after cutoff date
+    return unfilteredMonthlyGrowthRateChartData.filter(point => point.date >= cutoffDate);
+  }, [unfilteredMonthlyGrowthRateChartData, timeFilter]);
+  
   return (
     <div className="p-8">
       <h1 className="text-2xl font-bold mb-6 text-gray-900 dark:text-gray-100">Telegram Growth</h1>
+      <ThemeToggle />
       
       {/* Time filter controls */}
       <div className="flex justify-end mb-4">
@@ -207,20 +273,31 @@ export default function Index() {
       <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg mb-8">
         <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-gray-100">Cumulative Growth</h2>
         {cumulativeChartData.length > 0 ? (
-          <AreaChartSemiFilled data={cumulativeChartData} />
+          <AreaChartSemiFilled data={cumulativeChartData} timeFilter={timeFilter} />
         ) : (
           <p className="text-center py-10 text-gray-500">No data available for the selected period</p>
         )}
       </div>
-      
+
       {/* Growth Rate Chart */}
-      <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg">
+      <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg mb-8">
         <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-gray-100">Daily Growth Rate</h2>
         {growthRateChartData.length > 0 ? (
-          <GrowthRateChart data={growthRateChartData} />
+          <GrowthRateChart data={growthRateChartData} timeFilter={timeFilter} />
         ) : (
           <p className="text-center py-10 text-gray-500">No data available for the selected period</p>
         )}
+      </div>
+
+      {/* Monthly Growth Rate also gets the timeFilter prop */}
+      <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg">
+        <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-gray-100">Monthly Growth Rate</h2>
+        {monthlyGrowthRateChartData.length > 0 ? (
+          <MonthlyGrowthChart data={monthlyGrowthRateChartData} timeFilter={timeFilter} />
+        ) : (
+          <p className="text-center py-10 text-gray-500">No data available for the selected period</p>
+        )}
+        <p className="text-sm text-gray-500 mt-2 text-center">Average users per day for each month</p>
       </div>
     </div>
   );

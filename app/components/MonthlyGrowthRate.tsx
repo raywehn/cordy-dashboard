@@ -6,8 +6,8 @@ export type DataPoint = {
   value: number;
 };
 
-export function GrowthRateChart({ data, timeFilter }: { data: DataPoint[], timeFilter: string }) {
-  // Make sure we have data to avoid errors
+export function MonthlyGrowthChart({ data, timeFilter }: { data: DataPoint[], timeFilter: string }) {
+    // Make sure we have data to avoid errors
   if (!data || data.length === 0) {
     return <div className="h-72 w-full flex items-center justify-center text-gray-500">No data available</div>;
   }
@@ -70,18 +70,18 @@ export function GrowthRateChart({ data, timeFilter }: { data: DataPoint[], timeF
           />
 
           {/* Area */}
-          <path d={areaPath} className="text-green-200" fill="url(#growthRateGradient)" />
+          <path d={areaPath} className="text-blue-200" fill="url(#monthlyGrowthGradient)" />
           <defs>
             {/* Gradient definition */}
-            <linearGradient id="growthRateGradient" x1="0" x2="0" y1="0" y2="1">
+            <linearGradient id="monthlyGrowthGradient" x1="0" x2="0" y1="0" y2="1">
               <stop
                 offset="0%"
-                className="text-green-500/20 dark:text-green-500/20"
+                className="text-blue-500/20 dark:text-blue-500/20"
                 stopColor="currentColor"
               />
               <stop
                 offset="100%"
-                className="text-green-50/5 dark:text-green-900/5"
+                className="text-blue-50/5 dark:text-blue-900/5"
                 stopColor="currentColor"
               />
             </linearGradient>
@@ -91,7 +91,7 @@ export function GrowthRateChart({ data, timeFilter }: { data: DataPoint[], timeF
           <path
             d={d}
             fill="none"
-            className="text-green-500 dark:text-green-400"
+            className="text-blue-500 dark:text-blue-400"
             stroke="currentColor"
             strokeWidth="1.5"
             vectorEffect="non-scaling-stroke"
@@ -137,13 +137,12 @@ export function GrowthRateChart({ data, timeFilter }: { data: DataPoint[], timeF
               <TooltipContent>
                 <div>
                   {d.date.toLocaleDateString("en-US", {
-                    month: "short",
-                    day: "2-digit",
+                    month: "long",
                     year: "numeric"
                   })}
                 </div>
                 <div className="text-gray-500 text-sm">
-                  {d.value > 0 ? '+' : ''}{d.value.toLocaleString("en-US")} users
+                  {d.value > 0 ? '+' : ''}{d.value.toLocaleString("en-US")} avg users/day
                 </div>
               </TooltipContent>
             </ClientTooltip>
@@ -151,56 +150,37 @@ export function GrowthRateChart({ data, timeFilter }: { data: DataPoint[], timeF
         </svg>
 
         {/* X axis */}
-        {data.map((day, i) => {
-          if (i === 0 || i >= data.length - 3) return;
-          
-          const showLabel = () => {
-            const currentDate = day.date;
+        {data.map((month, i) => {
+            if (i === 0 || i >= data.length - 1) return;
             
-            // For 12 months or all time, show only every 3 months
+            const showLabel = () => {
+            // For 12 months or all time views, show only every 3 months
             if (timeFilter === "12months" || timeFilter === "all") {
-              // Check if this is the start of a quarter (Jan, Apr, Jul, Oct)
-              const isQuarterStart = currentDate.getMonth() % 3 === 0;
-              
-              // Only show if it's the first day of a quarter month
-              if (i > 0) {
-                const prevDate = data[i-1].date;
-                // If current month is different from previous and is a quarter start
-                if (currentDate.getMonth() !== prevDate.getMonth() && isQuarterStart) {
-                  return true;
-                }
-                return false;
-              }
-              return isQuarterStart;
+                // Only show quarters (Jan, Apr, Jul, Oct)
+                return month.date.getMonth() % 3 === 0 && (i === 0 || data[i-1].date.getMonth() !== month.date.getMonth());
             } else {
-              // For shorter time frames, keep existing logic
-              return i % 6 === 0;
+                // For shorter timeframes, keep showing every other month
+                return i % 2 === 0;
             }
-          };
-          
-          if (!showLabel()) return;
-          
-          return (
+            };
+            
+            if (!showLabel()) return;
+            
+            return (
             <div
-              key={i}
-              style={{
-                left: `${xScale(day.date)}%`,
+                key={i}
+                style={{
+                left: `${xScale(month.date)}%`,
                 top: "90%",
-              }}
-              className="absolute text-xs text-zinc-500 -translate-x-1/2"
+                }}
+                className="absolute text-xs text-zinc-500 -translate-x-1/2"
             >
-              {timeFilter === "12months" || timeFilter === "all" 
-                ? day.date.toLocaleDateString("en-US", {
-                    month: "short",
-                    year: "2-digit",
-                  })
-                : day.date.toLocaleDateString("en-US", {
-                    month: "short",
-                    day: "numeric",
-                  })
-              }
+                {month.date.toLocaleDateString("en-US", {
+                month: "short",
+                year: "2-digit"
+                })}
             </div>
-          );
+            );
         })}
       </div>
       {/* Y axis */}

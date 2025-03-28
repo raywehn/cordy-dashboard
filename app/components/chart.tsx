@@ -6,8 +6,8 @@ export type DataPoint = {
   value: number;
 };
 
-export function AreaChartSemiFilled({ data }: { data: DataPoint[] }) {
-    // Make sure we have data to avoid errors
+export function AreaChartSemiFilled({ data, timeFilter }: { data: DataPoint[], timeFilter: string }) {
+  // Make sure we have data to avoid errors
     if (!data || data.length === 0) {
       return <div className="h-72 w-full flex items-center justify-center text-gray-500">No data available</div>;
     }
@@ -135,8 +135,34 @@ export function AreaChartSemiFilled({ data }: { data: DataPoint[] }) {
 
         {/* X axis */}
         {data.map((day, i) => {
-          // show 1 every x labels
-          if (i % 6 !== 0 || i === 0 || i >= data.length - 3) return;
+          if (i === 0 || i >= data.length - 3) return;
+          
+          const showLabel = () => {
+            const currentDate = day.date;
+            
+            // For 12 months or all time, show only every 3 months
+            if (timeFilter === "12months" || timeFilter === "all") {
+              // Check if this is the start of a quarter (Jan, Apr, Jul, Oct)
+              const isQuarterStart = currentDate.getMonth() % 3 === 0;
+              
+              // Only show if it's the first day of a quarter month
+              if (i > 0) {
+                const prevDate = data[i-1].date;
+                // If current month is different from previous and is a quarter start
+                if (currentDate.getMonth() !== prevDate.getMonth() && isQuarterStart) {
+                  return true;
+                }
+                return false;
+              }
+              return isQuarterStart;
+            } else {
+              // For shorter time frames, keep existing logic
+              return i % 6 === 0;
+            }
+          };
+          
+          if (!showLabel()) return;
+          
           return (
             <div
               key={i}
@@ -146,10 +172,16 @@ export function AreaChartSemiFilled({ data }: { data: DataPoint[] }) {
               }}
               className="absolute text-xs text-zinc-500 -translate-x-1/2"
             >
-              {day.date.toLocaleDateString("en-US", {
-                month: "short",
-                day: "numeric",
-              })}
+              {timeFilter === "12months" || timeFilter === "all" 
+                ? day.date.toLocaleDateString("en-US", {
+                    month: "short",
+                    year: "2-digit",
+                  })
+                : day.date.toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                  })
+              }
             </div>
           );
         })}
